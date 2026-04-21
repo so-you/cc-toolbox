@@ -55,7 +55,7 @@ pub fn save_provider(provider: Provider) -> Result<(), String> {
 }
 
 #[tauri::command]
-pub async fn install_claude_code(mirror: String, app: tauri::AppHandle) -> Result<(), String> {
+pub fn install_claude_code(mirror: String, app: tauri::AppHandle) -> Result<(), String> {
     crate::installer::install_claude_code(app, mirror)
 }
 
