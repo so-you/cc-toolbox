@@ -89,9 +89,16 @@ fn check_claude_code() -> VersionStatus {
             dir.join("bin").join("claude")
         };
         if claude_bin.exists() {
-            match Command::new(&claude_bin).arg("--version").output() {
-                Ok(output) if output.status.success() => {
-                    let version = String::from_utf8_lossy(&output.stdout)
+            let output = if cfg!(target_os = "windows") {
+                Command::new("cmd")
+                    .args(&["/C", claude_bin.to_str().unwrap(), "--version"])
+                    .output()
+            } else {
+                Command::new(&claude_bin).arg("--version").output()
+            };
+            match output {
+                Ok(o) if o.status.success() => {
+                    let version = String::from_utf8_lossy(&o.stdout)
                         .lines().next().unwrap_or("").trim().to_string();
                     return VersionStatus {
                         installed: true,
