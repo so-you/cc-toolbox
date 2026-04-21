@@ -47,8 +47,6 @@ export default function InstallPage() {
     logEndRef.current?.scrollIntoView({ behavior: 'smooth' })
   }, [logs])
 
-  const allReady = status?.node?.installed && status?.git?.installed && status?.npm?.installed
-
   return (
     <div className="max-w-6xl mx-auto">
       <div className="mb-xl">
@@ -63,10 +61,10 @@ export default function InstallPage() {
               <span className="material-symbols-outlined text-3xl text-on-surface">code_blocks</span>
             </div>
             <h3 className="text-h2 text-on-surface mb-sm">安装 Claude Code</h3>
-            <p className="text-body-md text-on-surface-variant mb-lg max-w-md">此操作将通过 npm 全局安装 @anthropic-ai/claude-code。请确保下方环境检测均已通过。</p>
+            <p className="text-body-md text-on-surface-variant mb-lg max-w-md">一键自动检测环境、安装 Node.js（如缺失），并通过 npm 全局安装 Claude Code。</p>
             <button
               onClick={runInstall}
-              disabled={!allReady || installing}
+              disabled={installing}
               className="bg-primary text-on-primary text-button h-12 px-8 rounded-lg flex items-center gap-2 hover:bg-surface-tint transition-colors shadow-md active:scale-[0.98] disabled:opacity-50 disabled:cursor-not-allowed"
             >
               <span className="material-symbols-outlined text-[20px]">{installing ? 'sync' : 'download'}</span>
