@@ -4,6 +4,32 @@
 
 ---
 
+## BUG-005: CI 跨平台编译失败（`#[cfg]` vs `if cfg!()`）
+
+**发现时间**：2026-04-21
+**测试环境**：GitHub Actions (macOS-latest + windows-latest)
+
+### 现象
+推送代码后 CI 两个平台同时构建失败，报错：
+- macOS: `cannot find function 'windows_user_node_dir' in this scope`
+- Windows: `cannot find function 'macos_user_node_dir' in this scope`
+
+### 根因
+Rust 中 `if cfg!(target_os = "...")` 是**运行时条件判断**，编译器会解析所有分支的代码，只是根据条件选择执行路径。而 `#[cfg(target_os = "...")]` 是**编译时条件编译**，不符合条件的代码块根本不会进入编译单元。
+
+在 `installer.rs` 中，平台特定函数（如 `windows_user_node_dir()`）被 `#[cfg(target_os = "windows")]` 标记，只在 Windows 上编译。但 `download_and_install_nodejs()` 中使用了 `if cfg!(target_os = "windows") { windows_user_node_dir() }`，macOS 编译器仍然需要解析 `windows_user_node_dir()` 这个符号，但它不存在于 macOS 编译单元中，导致编译错误。
+
+### 解决方案
+将 `download_and_install_nodejs()` 中的 `if cfg!()` 运行时分支全部替换为 `#[cfg]` 编译时分支：
+- 每个平台使用独立的 `#[cfg(target_os = "windows")]` / `#[cfg(target_os = "macos")]` 代码块
+- 统一使用 `user_node_dir()` 函数（不带平台前缀），内部用 `#[cfg]` 标记
+- `add_to_user_path()` 同样使用 `#[cfg]` 标记，Windows 版写入注册表，macOS 版修改 shell profile
+
+**相关文件**：
+- `src-tauri/src/installer.rs`: 重写 `download_and_install_nodejs()`、重命名 `user_node_dir()`、`add_to_user_path()`
+
+---
+
 ## BUG-004: Node.js 安装在工具私有目录，其他程序无法使用
 
 **发现时间**：2026-04-21
