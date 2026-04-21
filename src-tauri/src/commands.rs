@@ -27,13 +27,93 @@ fn check_command(cmd: &str, arg: &[&str], required: &str) -> VersionStatus {
     }
 }
 
+fn check_nodejs() -> VersionStatus {
+    if let Some((node_path, _)) = crate::installer::find_nodejs_bin() {
+        match Command::new(&node_path).arg("--version").output() {
+            Ok(output) if output.status.success() => {
+                let version = String::from_utf8_lossy(&output.stdout)
+                    .lines().next().unwrap_or("").trim().to_string();
+                VersionStatus {
+                    installed: true,
+                    version: Some(version.clone()),
+                    required: ">= 18.0.0".into(),
+                    message: version,
+                }
+            }
+            _ => VersionStatus {
+                installed: false,
+                version: None,
+                required: ">= 18.0.0".into(),
+                message: "未安装".into(),
+            },
+        }
+    } else {
+        check_command("node", &["--version"], ">= 18.0.0")
+    }
+}
+
+fn check_npm() -> VersionStatus {
+    if let Some((node_path, npm_path)) = crate::installer::find_nodejs_bin() {
+        match crate::installer::npm_command(&node_path, &npm_path, &["--version"]).output() {
+            Ok(output) if output.status.success() => {
+                let version = String::from_utf8_lossy(&output.stdout)
+                    .lines().next().unwrap_or("").trim().to_string();
+                VersionStatus {
+                    installed: true,
+                    version: Some(version.clone()),
+                    required: ">= 9.0.0".into(),
+                    message: version,
+                }
+            }
+            _ => VersionStatus {
+                installed: false,
+                version: None,
+                required: ">= 9.0.0".into(),
+                message: "未安装".into(),
+            },
+        }
+    } else {
+        check_command("npm", &["--version"], ">= 9.0.0")
+    }
+}
+
+fn check_claude_code() -> VersionStatus {
+    let path_check = check_command("claude", &["--version"], "任意版本");
+    if path_check.installed {
+        return path_check;
+    }
+    if let Ok(dir) = crate::installer::nodejs_dir() {
+        let claude_bin = if cfg!(target_os = "windows") {
+            dir.join("claude.cmd")
+        } else {
+            dir.join("bin").join("claude")
+        };
+        if claude_bin.exists() {
+            match Command::new(&claude_bin).arg("--version").output() {
+                Ok(output) if output.status.success() => {
+                    let version = String::from_utf8_lossy(&output.stdout)
+                        .lines().next().unwrap_or("").trim().to_string();
+                    return VersionStatus {
+                        installed: true,
+                        version: Some(version.clone()),
+                        required: "任意版本".into(),
+                        message: version,
+                    };
+                }
+                _ => {}
+            }
+        }
+    }
+    path_check
+}
+
 #[tauri::command]
 pub fn system_check() -> SystemStatus {
     SystemStatus {
-        node: Some(check_command("node", &["--version"], ">= 18.0.0")),
+        node: Some(check_nodejs()),
         git: Some(check_command("git", &["--version"], "任意版本")),
-        npm: Some(check_command("npm", &["--version"], ">= 9.0.0")),
-        claude_code: Some(check_command("claude", &["--version"], "任意版本")),
+        npm: Some(check_npm()),
+        claude_code: Some(check_claude_code()),
     }
 }
 

@@ -13,12 +13,12 @@ fn emit_log(app: &AppHandle, line: &str) {
     let _ = app.emit("install-log", InstallLogEvent { line: line.to_string() });
 }
 
-fn nodejs_dir() -> Result<PathBuf, String> {
+pub fn nodejs_dir() -> Result<PathBuf, String> {
     let home = dirs::home_dir().ok_or("无法获取用户主目录")?;
     Ok(home.join(".cc-toolbox").join("nodejs"))
 }
 
-fn find_nodejs_bin() -> Option<(PathBuf, PathBuf)> {
+pub fn find_nodejs_bin() -> Option<(PathBuf, PathBuf)> {
     // 1. 检查本地安装的 node
     if let Ok(dir) = nodejs_dir() {
         if cfg!(target_os = "windows") {
@@ -44,6 +44,34 @@ fn find_nodejs_bin() -> Option<(PathBuf, PathBuf)> {
     }
 
     None
+}
+
+fn npm_cli_js_path() -> Option<PathBuf> {
+    let node_dir = nodejs_dir().ok()?;
+    let win = node_dir.join("node_modules").join("npm").join("bin").join("npm-cli.js");
+    if win.exists() {
+        return Some(win);
+    }
+    let unix = node_dir.join("lib").join("node_modules").join("npm").join("bin").join("npm-cli.js");
+    if unix.exists() {
+        return Some(unix);
+    }
+    None
+}
+
+pub fn npm_command(node_path: &Path, npm_path: &Path, args: &[&str]) -> Command {
+    let is_local = node_path.to_string_lossy().contains(".cc-toolbox");
+    if is_local {
+        if let Some(npm_cli) = npm_cli_js_path() {
+            let mut cmd = Command::new(node_path);
+            cmd.arg(&npm_cli);
+            cmd.args(args);
+            return cmd;
+        }
+    }
+    let mut cmd = Command::new(npm_path);
+    cmd.args(args);
+    cmd
 }
 
 fn download_and_install_nodejs(app: &AppHandle) -> Result<(), String> {
@@ -148,7 +176,8 @@ fn download_and_install_nodejs(app: &AppHandle) -> Result<(), String> {
     let (node_path, npm_path) = find_nodejs_bin().ok_or("Node.js 安装后验证失败")?;
     let node_ver = Command::new(&node_path).arg("--version").output()
         .map_err(|e| format!("验证失败: {}", e))?;
-    let npm_ver = Command::new(&npm_path).arg("--version").output()
+    let npm_ver = npm_command(&node_path, &npm_path, &["--version"])
+        .output()
         .map_err(|e| format!("验证失败: {}", e))?;
 
     if node_ver.status.success() && npm_ver.status.success() {
@@ -182,8 +211,7 @@ pub fn install_claude_code(app: AppHandle, mirror: String) -> Result<(), String>
     // 3. 安装 claude-code
     emit_log(&app, "[↓] 正在安装 @anthropic-ai/claude-code...");
 
-    let mut cmd = Command::new(&npm_path);
-    cmd.arg("install").arg("-g").arg("@anthropic-ai/claude-code");
+    let mut cmd = npm_command(&node_path, &npm_path, &["install", "-g", "@anthropic-ai/claude-code"]);
 
     if !registry_arg.is_empty() {
         cmd.arg(registry_arg);
