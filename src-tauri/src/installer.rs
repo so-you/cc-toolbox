@@ -13,8 +13,10 @@ fn emit_log(app: &AppHandle, line: &str) {
     let _ = app.emit("install-log", InstallLogEvent { line: line.to_string() });
 }
 
+// ---- Platform-specific node installation directories ----
+
 #[cfg(target_os = "windows")]
-fn windows_user_node_dir() -> PathBuf {
+fn user_node_dir() -> PathBuf {
     let local_appdata = std::env::var("LOCALAPPDATA")
         .map(PathBuf::from)
         .unwrap_or_else(|_| dirs::home_dir().unwrap_or_default().join("AppData").join("Local"));
@@ -22,19 +24,15 @@ fn windows_user_node_dir() -> PathBuf {
 }
 
 #[cfg(target_os = "macos")]
-fn macos_user_node_dir() -> PathBuf {
+fn user_node_dir() -> PathBuf {
     dirs::home_dir().unwrap_or_default().join(".local").join("node")
 }
 
 pub fn nodejs_dir() -> Result<PathBuf, String> {
-    if cfg!(target_os = "windows") {
-        Ok(windows_user_node_dir())
-    } else if cfg!(target_os = "macos") {
-        Ok(macos_user_node_dir())
-    } else {
-        Err("不支持的操作系统".into())
-    }
+    Ok(user_node_dir())
 }
+
+// ---- Find node/npm binaries ----
 
 pub fn find_nodejs_bin() -> Option<(PathBuf, PathBuf)> {
     // 1. 检查系统 PATH 中的 node（当前进程环境变量已包含则优先）
@@ -44,49 +42,45 @@ pub fn find_nodejs_bin() -> Option<(PathBuf, PathBuf)> {
         }
     }
 
-    // 2. 检查 Windows 用户目录安装位置
+    // 2. 检查用户目录安装位置
+    let node_dir = user_node_dir();
     #[cfg(target_os = "windows")]
     {
-        let node_dir = windows_user_node_dir();
         let node = node_dir.join("node.exe");
         let npm = node_dir.join("npm.cmd");
         if node.exists() && npm.exists() {
             return Some((node, npm));
         }
     }
-
-    // 3. 检查 macOS 用户目录安装位置
     #[cfg(target_os = "macos")]
     {
-        if let Some(home) = dirs::home_dir() {
-            let bin_dir = home.join(".local").join("node").join("bin");
-            let node = bin_dir.join("node");
-            let npm = bin_dir.join("npm");
-            if node.exists() && npm.exists() {
-                return Some((node, npm));
-            }
+        let bin_dir = node_dir.join("bin");
+        let node = bin_dir.join("node");
+        let npm = bin_dir.join("npm");
+        if node.exists() && npm.exists() {
+            return Some((node, npm));
         }
     }
 
     None
 }
 
-fn npm_cli_js_path() -> Option<PathBuf> {
-    let candidates: Vec<PathBuf> = if cfg!(target_os = "windows") {
-        let local_appdata = std::env::var("LOCALAPPDATA").unwrap_or_default();
-        vec![
-            PathBuf::from(format!(r"{}\Programs\nodejs\node_modules\npm\bin\npm-cli.js", local_appdata)),
-        ]
-    } else {
-        let home = dirs::home_dir().map(|p| p.to_string_lossy().to_string()).unwrap_or_default();
-        vec![
-            PathBuf::from(format!("{}/.local/node/lib/node_modules/npm/bin/npm-cli.js", home)),
-        ]
-    };
+// ---- npm execution wrapper (handles Windows .cmd limitation) ----
 
-    for candidate in candidates {
-        if candidate.exists() {
-            return Some(candidate);
+fn npm_cli_js_path() -> Option<PathBuf> {
+    let node_dir = user_node_dir();
+    #[cfg(target_os = "windows")]
+    {
+        let win = node_dir.join("node_modules").join("npm").join("bin").join("npm-cli.js");
+        if win.exists() {
+            return Some(win);
+        }
+    }
+    #[cfg(target_os = "macos")]
+    {
+        let unix = node_dir.join("lib").join("node_modules").join("npm").join("bin").join("npm-cli.js");
+        if unix.exists() {
+            return Some(unix);
         }
     }
     None
@@ -108,8 +102,10 @@ pub fn npm_command(node_path: &Path, npm_path: &Path, args: &[&str]) -> Command 
     cmd
 }
 
+// ---- PATH configuration ----
+
 #[cfg(target_os = "windows")]
-fn add_to_windows_path(dir: &Path) -> Result<(), String> {
+fn add_to_user_path(dir: &Path) -> Result<(), String> {
     let dir_str = dir.to_string_lossy().to_string();
     let output = Command::new("powershell")
         .args(&[
@@ -130,23 +126,8 @@ fn add_to_windows_path(dir: &Path) -> Result<(), String> {
     Ok(())
 }
 
-fn update_current_process_path() {
-    let current = std::env::var("PATH").unwrap_or_default();
-    #[cfg(target_os = "windows")]
-    {
-        let local_appdata = std::env::var("LOCALAPPDATA").unwrap_or_default();
-        let user_node = format!(r"{}\Programs\nodejs", local_appdata);
-        std::env::set_var("PATH", format!("{};{}", current, user_node));
-    }
-    #[cfg(target_os = "macos")]
-    {
-        let home = dirs::home_dir().map(|p| p.to_string_lossy().to_string()).unwrap_or_default();
-        std::env::set_var("PATH", format!("{}:{}/.local/node/bin", current, home));
-    }
-}
-
 #[cfg(target_os = "macos")]
-fn add_to_macos_path(bin_dir: &Path) -> Result<(), String> {
+fn add_to_user_path(bin_dir: &Path) -> Result<(), String> {
     let home = dirs::home_dir().ok_or("无法获取主目录")?;
     let shell = std::env::var("SHELL").unwrap_or_default();
     let profile = if shell.contains("zsh") || !home.join(".bashrc").exists() {
@@ -172,6 +153,22 @@ fn add_to_macos_path(bin_dir: &Path) -> Result<(), String> {
     Ok(())
 }
 
+fn update_current_process_path() {
+    let current = std::env::var("PATH").unwrap_or_default();
+    #[cfg(target_os = "windows")]
+    {
+        let user_node = user_node_dir();
+        std::env::set_var("PATH", format!("{};{}", current, user_node.to_string_lossy()));
+    }
+    #[cfg(target_os = "macos")]
+    {
+        let bin_dir = user_node_dir().join("bin");
+        std::env::set_var("PATH", format!("{}:{}", current, bin_dir.to_string_lossy()));
+    }
+}
+
+// ---- Download & install Node.js ----
+
 fn download_and_install_nodejs(app: &AppHandle) -> Result<(), String> {
     emit_log(app, "[!] Node.js 环境未检测到，正在准备自动安装...");
 
@@ -181,8 +178,9 @@ fn download_and_install_nodejs(app: &AppHandle) -> Result<(), String> {
 
     let version = "v20.18.3";
 
-    if cfg!(target_os = "windows") {
-        let node_dir = windows_user_node_dir();
+    #[cfg(target_os = "windows")]
+    {
+        let node_dir = user_node_dir();
         fs::create_dir_all(&node_dir).map_err(|e| e.to_string())?;
 
         let url = format!("https://nodejs.org/dist/{0}/node-{0}-win-x64.zip", version);
@@ -237,10 +235,13 @@ fn download_and_install_nodejs(app: &AppHandle) -> Result<(), String> {
             fs::remove_dir(&subdir).map_err(|e| e.to_string())?;
         }
 
-        add_to_windows_path(&node_dir)?;
+        add_to_user_path(&node_dir)?;
         update_current_process_path();
-    } else if cfg!(target_os = "macos") {
-        let node_dir = macos_user_node_dir();
+    }
+
+    #[cfg(target_os = "macos")]
+    {
+        let node_dir = user_node_dir();
         fs::create_dir_all(&node_dir).map_err(|e| e.to_string())?;
 
         let arch = if cfg!(target_arch = "aarch64") { "darwin-arm64" } else { "darwin-x64" };
@@ -275,9 +276,7 @@ fn download_and_install_nodejs(app: &AppHandle) -> Result<(), String> {
             return Err("解压失败".into());
         }
 
-        add_to_macos_path(&node_dir.join("bin"))?;
-    } else {
-        return Err("不支持的操作系统".into());
+        add_to_user_path(&node_dir.join("bin"))?;
     }
 
     // 验证安装
@@ -297,6 +296,8 @@ fn download_and_install_nodejs(app: &AppHandle) -> Result<(), String> {
 
     Ok(())
 }
+
+// ---- Install Claude Code ----
 
 pub fn install_claude_code(app: AppHandle, mirror: String) -> Result<(), String> {
     // 1. 确保 node/npm 可用
