@@ -1,0 +1,4 @@
+[[permission]]
+identifier = "allow-all"
+description = "Allow all app commands"
+commands.allow = ["system_check", "load_providers", "save_provider", "install_claude_code", "write_aliases"]
